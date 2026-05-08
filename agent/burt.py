@@ -51,7 +51,9 @@ class Burt:
             logger.warning("discord.py not installed — Burt disabled")
             return
 
-        self._client = discord.Client(intents=discord.Intents.default())
+        intents = discord.Intents.default()
+        intents.message_content = True
+        self._client = discord.Client(intents=intents)
         self._setup_events()
 
     # ------------------------------------------------------------------

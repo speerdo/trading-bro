@@ -55,6 +55,10 @@ class Executor:
         self.cb = cb
         self.paper_positions: dict[str, PaperPosition] = {}
         self.live_positions: dict[str, Any] = {}
+        self._notifier: Any = None
+
+    def set_notifier(self, notifier: Any) -> None:
+        self._notifier = notifier
 
     async def enter_position(
         self, symbol: str, direction: str, entry_price: float,
@@ -90,6 +94,14 @@ class Executor:
             f"📄 PAPER ENTRY: {direction.upper()} {display_name} @ {entry_price:.2f}"
         )
         await self._log_trade(pos, order_id="")
+        if self._notifier:
+            try:
+                await self._notifier.notify_trade_opened(
+                    display_name, direction, entry_price, size_usdc,
+                    leverage, stop_loss, take_profit,
+                )
+            except Exception as exc:
+                logger.warning(f"Entry notification failed: {exc}")
         return OrderResult(success=True, order_id=f"paper-{product_id}")
 
     async def close_position(self, product_id: str, exit_price: float | None = None) -> OrderResult:
@@ -105,6 +117,14 @@ class Executor:
         del self.paper_positions[product_id]
         logger.info(f"📄 PAPER CLOSE: {pos.display_name} @ {exit_price:.2f} P&L=${pnl:+.2f}")
         await self._update_trade_close(pos)
+        if self._notifier:
+            try:
+                await self._notifier.notify_trade_closed(
+                    pos.display_name, pos.direction, pos.entry_price,
+                    exit_price, pnl,
+                )
+            except Exception as exc:
+                logger.warning(f"Close notification failed: {exc}")
         return OrderResult(success=True, filled_price=exit_price)
 
     @staticmethod

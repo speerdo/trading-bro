@@ -19,10 +19,12 @@ from loguru import logger
 
 import config
 from agent.api import app, set_agent_state
+from agent.burt import Burt
 from agent.coinbase_client import CoinbaseClient
 from agent.database import get_db
 from agent.executor import Executor
 from agent.indicator_engine import compute_indicators
+from agent.notifier import Notifier
 from agent.position_monitor import PositionMonitor
 from agent.risk_manager import RiskManager
 from agent.screener import Screener
@@ -41,9 +43,14 @@ class TradeBrainAgent:
         self.screener = Screener(self.cb)
         self.signal_engine = SignalEngine()
         self.monitor = PositionMonitor(self.executor, self.cb, self.risk)
+        self.burt = Burt(None, self.executor, self.risk)
+        self.notifier = Notifier(self.burt)
+        self.monitor.set_notifier(self.notifier)
+        self.executor.set_notifier(self.notifier)
         self.watchlist: list[str] = []
         self._shutdown = asyncio.Event()
         self._api_task = None
+        self._burt_task = None
 
     # ------------------------------------------------------------------
     # Startup
@@ -56,6 +63,10 @@ class TradeBrainAgent:
 
         self.db = await get_db()
         logger.info("✅ Database connected")
+
+        # Wire Burt after DB is ready
+        self.burt.db = self.db
+        self._burt_task = asyncio.create_task(self.burt.start())
 
         ok = await self.cb.verify_auth()
         if not ok:
@@ -192,6 +203,9 @@ class TradeBrainAgent:
         logger.info("Shutting down...")
         self._shutdown.set()
         self.monitor.stop()
+        self.burt.stop()
+        if self._burt_task:
+            self._burt_task.cancel()
         if self._api_task:
             self._api_task.cancel()
         await self.signal_engine.close()

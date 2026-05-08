@@ -41,6 +41,10 @@ class PositionMonitor:
         self.risk = risk
         self._task: asyncio.Task | None = None
         self._running = False
+        self._notifier: Any = None
+
+    def set_notifier(self, notifier: Any) -> None:
+        self._notifier = notifier
 
     def start(self) -> None:
         if self._task and not self._task.done():
@@ -116,3 +120,11 @@ class PositionMonitor:
         emoji = "🟢" if snap.unrealized_pnl >= 0 else "🔴"
         logger.info(f"{emoji} {mode} CLOSE: {pos.display_name} "
                    f"P&L=${snap.unrealized_pnl:+.2f}")
+        if self._notifier:
+            try:
+                await self._notifier.notify_trade_closed(
+                    pos.display_name, pos.direction, pos.entry_price,
+                    snap.current_price, snap.unrealized_pnl,
+                )
+            except Exception as exc:
+                logger.warning(f"Close notification failed: {exc}")
