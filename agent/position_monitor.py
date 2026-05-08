@@ -1,15 +1,9 @@
 """
-Position Monitor — Background task that tracks open positions.
+Position Monitor — tracks open positions and handles exits.
 
 Checks every 30 seconds:
-- Paper positions: simulate P&L against live mid prices
-- Live positions: sync with exchange via fetch_positions()
-
-On close (stop/TP hit or manual close):
-- Update trade record in DB
-- Update daily P&L for circuit breaker
-- Trigger Burt notification
-- Trigger memory formation
+- Paper positions: compare to current mark price
+- Live positions: sync with /cfm/positions
 """
 
 import asyncio
@@ -19,7 +13,7 @@ from typing import Any
 from loguru import logger
 
 from agent.executor import Executor, PaperPosition
-from agent.data_client import HyperliquidDataClient
+from agent.coinbase_client import CoinbaseClient
 from agent.database import get_db
 from agent.risk_manager import RiskManager
 import config
@@ -27,182 +21,98 @@ import config
 
 @dataclass
 class PositionSnapshot:
-    symbol: str
+    product_id: str
     direction: str
     entry_price: float
     current_price: float
     unrealized_pnl: float
     stop_loss: float
     take_profit: float
-    status: str  # "open" | "stopped" | "taken_profit" | "closed"
+    status: str
 
 
 class PositionMonitor:
-    """Monitors open positions and handles exits."""
 
-    CHECK_INTERVAL = 30  # seconds
+    CHECK_INTERVAL = 30
 
-    def __init__(self, executor: Executor, data_client: HyperliquidDataClient,
-                 risk_manager: RiskManager):
+    def __init__(self, executor: Executor, cb: CoinbaseClient, risk: RiskManager):
         self.executor = executor
-        self.client = data_client
-        self.risk = risk_manager
-        self.cfg = config.get_config()
+        self.cb = cb
+        self.risk = risk
         self._task: asyncio.Task | None = None
         self._running = False
 
-    # ------------------------------------------------------------------
-    # Lifecycle
-    # ------------------------------------------------------------------
-
     def start(self) -> None:
-        """Start the background monitor task."""
-        if self._task is not None and not self._task.done():
-            logger.warning("PositionMonitor already running")
+        if self._task and not self._task.done():
             return
         self._running = True
         self._task = asyncio.create_task(self._loop(), name="position_monitor")
         logger.info("PositionMonitor started")
 
     def stop(self) -> None:
-        """Stop the monitor."""
         self._running = False
         if self._task and not self._task.done():
             self._task.cancel()
-        logger.info("PositionMonitor stopped")
-
-    # ------------------------------------------------------------------
-    # Main loop
-    # ------------------------------------------------------------------
 
     async def _loop(self) -> None:
         while self._running:
             try:
-                await self._check_all_positions()
+                await self._check()
             except Exception as exc:
                 logger.error(f"PositionMonitor error: {exc}")
             await asyncio.sleep(self.CHECK_INTERVAL)
 
-    async def _check_all_positions(self) -> None:
-        """Check all open positions for exits."""
+    async def _check(self) -> None:
         positions = self.executor.get_open_positions()
         if not positions:
             return
 
-        symbols = [p.symbol for p in positions]
-        current_prices: dict[str, float] = {}
-
-        # Fetch current mid prices via REST (lightweight)
-        for symbol in symbols:
+        prices: dict[str, float] = {}
+        for pos in positions:
             try:
-                price = self.client.get_current_price(symbol)
-                if price is None:
-                    # Fallback: fetch via candles
-                    df = await self.client.get_candles(symbol, "1m", limit=1)
-                    if not df.empty:
-                        price = float(df.iloc[-1]["close"])
-                if price:
-                    current_prices[symbol] = price
-            except Exception as exc:
-                logger.warning(f"Failed to fetch price for {symbol}: {exc}")
+                details = await self.cb.hydrate_product_details(pos.product_id)
+                prices[pos.product_id] = details.get("mark_price") or pos.entry_price
+            except Exception:
+                prices[pos.product_id] = pos.entry_price
 
         for pos in positions:
-            price = current_prices.get(pos.symbol)
-            if price is None:
+            price = prices.get(pos.product_id)
+            if not price:
                 continue
-
-            snapshot = self._evaluate_position(pos, price)
-
-            if snapshot.status != "open":
-                await self._handle_exit(pos, snapshot)
+            snap = self._evaluate(pos, price)
+            if snap.status != "open":
+                await self._handle_exit(pos, snap)
             else:
-                logger.debug(
-                    f"{pos.symbol} open @ {pos.entry_price:.2f} "
-                    f"current={price:.2f} uP&L=${snapshot.unrealized_pnl:+.2f}"
-                )
+                logger.debug(f"{pos.display_name} open @ {pos.entry_price:.2f} "
+                            f"current={price:.2f} uP&L=${snap.unrealized_pnl:+.2f}")
 
-    def _evaluate_position(self, pos: PaperPosition, current_price: float) -> PositionSnapshot:
-        """Determine if a position has hit stop or TP."""
+    def _evaluate(self, pos: PaperPosition, price: float) -> PositionSnapshot:
         if pos.direction == "long":
-            unrealized = (current_price - pos.entry_price) / pos.entry_price * pos.size_usdc
-            if current_price <= pos.stop_loss:
-                status = "stopped"
-            elif current_price >= pos.take_profit:
-                status = "taken_profit"
-            else:
-                status = "open"
-        else:  # short
-            unrealized = (pos.entry_price - current_price) / pos.entry_price * pos.size_usdc
-            if current_price >= pos.stop_loss:
-                status = "stopped"
-            elif current_price <= pos.take_profit:
-                status = "taken_profit"
-            else:
-                status = "open"
+            pnl = (price - pos.entry_price) / pos.entry_price * pos.size_usdc
+            status = "stopped" if price <= pos.stop_loss else \
+                     "taken_profit" if price >= pos.take_profit else "open"
+        else:
+            pnl = (pos.entry_price - price) / pos.entry_price * pos.size_usdc
+            status = "stopped" if price >= pos.stop_loss else \
+                     "taken_profit" if price <= pos.take_profit else "open"
 
         return PositionSnapshot(
-            symbol=pos.symbol,
-            direction=pos.direction,
-            entry_price=pos.entry_price,
-            current_price=current_price,
-            unrealized_pnl=unrealized,
-            stop_loss=pos.stop_loss,
-            take_profit=pos.take_profit,
-            status=status,
+            product_id=pos.product_id, direction=pos.direction,
+            entry_price=pos.entry_price, current_price=price,
+            unrealized_pnl=pnl, stop_loss=pos.stop_loss,
+            take_profit=pos.take_profit, status=status,
         )
 
-    async def _handle_exit(self, pos: PaperPosition, snapshot: PositionSnapshot) -> None:
-        """Close a position and update records."""
-        result = await self.executor.close_position(pos.symbol, snapshot.current_price)
+    async def _handle_exit(self, pos: PaperPosition, snap: PositionSnapshot) -> None:
+        result = await self.executor.close_position(pos.product_id, snap.current_price)
         if not result.success:
-            logger.error(f"Failed to close {pos.symbol}: {result.error}")
+            logger.error(f"Failed to close {pos.product_id}: {result.error}")
             return
+        self.risk.apply_loss(snap.unrealized_pnl)
+        await self._notify(pos, snap)
 
-        # Update risk manager daily loss
-        pnl = snapshot.unrealized_pnl
-        self.risk.apply_loss(pnl)
-
-        # Trigger notifications (Burt or webhook)
-        await self._notify_close(pos, snapshot)
-
-        # Form memory (if Burt memory engine is available)
-        await self._form_memory(pos, snapshot)
-
-    # ------------------------------------------------------------------
-    # Notifications
-    # ------------------------------------------------------------------
-
-    async def _notify_close(self, pos: PaperPosition, snapshot: PositionSnapshot) -> None:
-        """Send close notification."""
+    async def _notify(self, pos: PaperPosition, snap: PositionSnapshot) -> None:
         mode = "PAPER" if pos.is_paper else "LIVE"
-        emoji = "🟢" if snapshot.unrealized_pnl >= 0 else "🔴"
-        logger.info(
-            f"{emoji} {mode} CLOSE: {pos.symbol} {pos.direction.upper()} "
-            f"P&L=${snapshot.unrealized_pnl:+.2f} (exit={snapshot.status})"
-        )
-        # Actual Burt/webhook notification delegated to notifier module (Phase 13)
-
-    # ------------------------------------------------------------------
-    # Memory
-    # ------------------------------------------------------------------
-
-    async def _form_memory(self, pos: PaperPosition, snapshot: PositionSnapshot) -> None:
-        """Form a memory from trade outcome for Burt."""
-        try:
-            db = await get_db()
-            outcome = "win" if snapshot.unrealized_pnl >= 0 else "loss"
-            memory_content = (
-                f"{pos.direction.upper()} {pos.symbol} at {pos.entry_price:.2f}, "
-                f"exited at {snapshot.current_price:.2f} with P&L ${snapshot.unrealized_pnl:+.2f}. "
-                f"Strategy: {pos.strategy}, confidence: {pos.confidence:.2f}."
-            )
-            await db.store_memory(
-                memory_type="lesson",
-                content=memory_content,
-                source="trade_outcome",
-                symbol=pos.symbol,
-                strategy=pos.strategy,
-                importance=0.7 if abs(snapshot.unrealized_pnl) > pos.risk_usdc * 2 else 0.5,
-            )
-        except Exception as exc:
-            logger.warning(f"Failed to form memory: {exc}")
+        emoji = "🟢" if snap.unrealized_pnl >= 0 else "🔴"
+        logger.info(f"{emoji} {mode} CLOSE: {pos.display_name} "
+                   f"P&L=${snap.unrealized_pnl:+.2f}")

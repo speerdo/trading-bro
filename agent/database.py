@@ -117,8 +117,9 @@ class Database:
             INSERT INTO trades (
                 symbol, direction, strategy, confidence, entry_price,
                 stop_loss, take_profit, size_usdc, margin_usdc, leverage,
-                risk_usdc, is_paper, status, reasoning, order_id, signal_id
-            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+                risk_usdc, is_paper, status, reasoning, order_id, signal_id,
+                product_id, display_name, tax_treatment, product_type
+            ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
             RETURNING id
         """
         vals = (
@@ -138,6 +139,10 @@ class Database:
             trade.get("reasoning", ""),
             trade.get("order_id"),
             trade.get("signal_id"),
+            trade.get("product_id", ""),
+            trade.get("display_name", ""),
+            trade.get("tax_treatment", "1256"),
+            trade.get("product_type", "perp"),
         )
         tid = await self.fetchval(sql, *vals)
         logger.debug(f"Logged trade {tid} for {trade['symbol']}")

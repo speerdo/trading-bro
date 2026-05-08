@@ -52,7 +52,12 @@ CREATE TABLE IF NOT EXISTS trades (
     closed_at       TIMESTAMPTZ,
     reasoning       TEXT,
     order_id        TEXT,
-    signal_id       INT REFERENCES signals(id)
+    signal_id       INT REFERENCES signals(id),
+    -- Coinbase FCM product identity
+    product_id      TEXT,
+    display_name    TEXT,
+    tax_treatment   TEXT DEFAULT '1256',
+    product_type    TEXT DEFAULT 'perp'
 );
 
 CREATE TABLE IF NOT EXISTS agent_config (
@@ -111,6 +116,7 @@ CREATE TABLE IF NOT EXISTS daily_consolidations (
 
 CREATE INDEX IF NOT EXISTS idx_trades_created ON trades(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_trades_symbol ON trades(symbol);
+CREATE INDEX IF NOT EXISTS idx_trades_product_id ON trades(product_id);
 CREATE INDEX IF NOT EXISTS idx_signals_created ON signals(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_signals_acted ON signals(acted_on);
 CREATE INDEX IF NOT EXISTS idx_screener_created ON screener_runs(created_at DESC);

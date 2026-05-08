@@ -1,10 +1,11 @@
 # TradeBrain (Burt)
 
 > An AI-powered crypto trading agent with personality, memory, and risk management.
+> **Now trading on Coinbase Advanced Perps (FCM)** — CFTC-regulated, USA-compliant.
 
 ## What is TradeBrain?
 
-TradeBrain is a personal, locally-run AI trading agent for Hyperliquid perpetual futures. It continuously screens all 200+ perp markets, evaluates setups using Kimi K2.6 via OpenRouter, and executes leveraged long/short positions — all with mandatory risk controls.
+TradeBrain is a personal, locally-run AI trading agent for **Coinbase Financial Markets (FCM)** perp-style futures. It continuously screens ~20 FCM perp markets, evaluates setups using Kimi K2.6 via OpenRouter, and executes leveraged long/short positions — all with mandatory risk controls and Section 1256 tax treatment.
 
 **Paper trading is ON by default.** One toggle switches to live trading.
 
@@ -16,11 +17,11 @@ Burt is the agent's personality layer. He's conversational, dry, self-aware, and
 
 | Feature | Status |
 |---------|--------|
-| Market Screener (Option B) | ✅ Scores all 200+ HL markets every 4h |
+| FCM Market Screener | ✅ Discovers ~22 perp products, scores top 5 |
 | AI Signal Evaluation (Kimi K2.6) | ✅ Working with OpenRouter |
 | Risk Manager (stops, sizing, circuit breaker) | ✅ Full implementation |
 | Paper Trading | ✅ Ready for testing |
-| Live Trading (CCXT/Hyperliquid) | ⏳ Needs `HL_WALLET_ADDRESS` + `HL_API_PRIVATE_KEY` |
+| Live Trading (Coinbase FCM) | ⏳ Needs futures buying power |
 | Position Monitor | ✅ Full implementation |
 | Discord Bot (Burt personality) | ✅ Skeleton ready — needs `DISCORD_BOT_TOKEN` |
 | Semantic Memory (pgvector) | ✅ Full implementation |
@@ -35,8 +36,8 @@ Burt is the agent's personality layer. He's conversational, dry, self-aware, and
 ├─────────────────────────────────────────────────────────────┤
 │  Screener → Indicators → Signal Engine → Risk → Executor    │
 │     ↑         ↑              ↑                               │
-│  HL REST   pandas-ta     OpenRouter (Kimi K2.6)            │
-│  HL WS                                                  │
+│  Coinbase   pandas       OpenRouter (Kimi K2.6)            │
+│  FCM API                                               │
 ├─────────────────────────────────────────────────────────────┤
 │  Position Monitor (30s) | Burt Bot (Discord) | FastAPI    │
 │       ↓                        ↓                  ↓         │
@@ -51,8 +52,8 @@ Burt is the agent's personality layer. He's conversational, dry, self-aware, and
 | Layer | Technology |
 |---|---|
 | Signal Brain | Kimi K2.6 via OpenRouter |
-| Exchange | Hyperliquid perps via CCXT |
-| Market Data | Hyperliquid REST + WebSocket (free) |
+| Exchange | Coinbase Financial Markets (FCM) — CFTC-regulated US DCM |
+| Market Data | Native JWT-signed Coinbase Brokerage v3 client |
 | Indicators | Manual pandas implementation (RSI, MACD, BB, ATR, EMA) |
 | Backend API | FastAPI + uvicorn |
 | Frontend | SvelteKit 2 + Svelte 5 runes |
@@ -68,22 +69,19 @@ Three built-in strategies provide signal prompts to the AI:
 2. **Bollinger Band Mean Reversion** — Fade overextension back to the mean
 3. **EMA Trend + Pullback** — Enter pullbacks to 20 EMA in strong trends
 
-New strategies inherit from `BaseStrategy` and auto-register in the UI.
-
 ## Risk Management (Non-Negotiable)
 
 - **Position sizing**: At-risk dollars / stop distance, capped at 20% margin
 - **Stop loss**: ATR-based (default) or fixed % — placed simultaneously with entry
 - **Take profit**: Configurable R:R (default 2.0)
 - **Circuit breaker**: Halts ALL trading after daily loss limit (default 5%)
-- **Leverage cap**: Default 3x, max 20x in UI
+- **Leverage cap**: Default 3x, max 10x (FCM limit)
 - **Min confidence**: 0.65 to act on a signal
 
 ## Quick Start
 
 ```bash
 # 1. Clone & setup
-git clone <repo>
 cd tradebrain
 python -m venv venv
 source venv/bin/activate
@@ -96,11 +94,17 @@ cp .env.example .env
 # 3. Initialize database
 python scripts/setup_db.py
 
-# 4. Test the screener (no API keys needed)
+# 4. Test the screener
 python -c "
 import asyncio
-from agent.screener import run_screener
-print(asyncio.run(run_screener()))
+from agent.coinbase_client import CoinbaseClient
+from agent.screener import Screener
+async def test():
+    cb = CoinbaseClient()
+    s = Screener(cb)
+    print(await s.run())
+    await cb.close()
+asyncio.run(test())
 "
 
 # 5. Start the agent
@@ -113,15 +117,15 @@ cd ui && npm install && npm run dev
 
 ## Required Environment Variables
 
-| Variable | Phase | Status | Where to Get |
-|---|---|---|---|
-| `DATABASE_URL` | Phase 2 | ✅ Ready | [neon.tech](https://neon.tech) |
-| `OPENROUTER_API_KEY` | Phase 7 | ✅ Ready | [openrouter.ai](https://openrouter.ai) |
-| `HL_WALLET_ADDRESS` | Phase 9 | ⏳ Needed | Your Hyperliquid wallet |
-| `HL_API_PRIVATE_KEY` | Phase 9 | ⏳ Needed | [app.hyperliquid.xyz/API](https://app.hyperliquid.xyz/API) |
-| `DISCORD_BOT_TOKEN` | Phase 12 | ⏳ Needed | [discord.com/developers](https://discord.com/developers) |
-| `DISCORD_CHANNEL_ID` | Phase 12 | ⏳ Needed | Right-click channel → Copy ID |
-| `DISCORD_USER_ID` | Phase 12 | ⏳ Needed | Right-click your name → Copy ID |
+| Variable | Status | Where to Get |
+|---|---|---|
+| `DATABASE_URL` | ✅ Ready | [neon.tech](https://neon.tech) |
+| `OPENROUTER_API_KEY` | ✅ Ready | [openrouter.ai](https://openrouter.ai) |
+| `COINBASE_API_KEY` | ✅ Ready | [portal.cdp.coinbase.com](https://portal.cdp.coinbase.com) — CDP key name |
+| `COINBASE_API_SECRET` | ✅ Ready | Same as above — EC private key PEM |
+| `DISCORD_BOT_TOKEN` | ⏳ Optional | [discord.com/developers](https://discord.com/developers) |
+| `DISCORD_CHANNEL_ID` | ⏳ Optional | Right-click channel → Copy ID |
+| `DISCORD_USER_ID` | ⏳ Optional | Right-click your name → Copy ID |
 
 ## Project Structure
 
@@ -130,13 +134,15 @@ tradebrain/
 ├── agent/
 │   ├── main.py              # Entry point, startup, main loop
 │   ├── api.py               # FastAPI backend
-│   ├── screener.py          # Market screener
-│   ├── data_client.py       # Hyperliquid REST + WebSocket
+│   ├── coinbase_client.py   # Native JWT Coinbase Brokerage v3 client
+│   ├── screener.py          # FCM perp universe discovery + scoring
 │   ├── indicator_engine.py  # Manual pandas TA indicators
 │   ├── signal_engine.py     # OpenRouter / Kimi K2.6 client
 │   ├── risk_manager.py      # Position sizing + circuit breaker
-│   ├── executor.py          # CCXT order placement + paper trading
+│   ├── executor.py          # Order placement + paper trading
 │   ├── position_monitor.py  # Track open positions
+│   ├── maintenance.py       # Friday/quarterly maintenance window check
+│   ├── regime.py            # BTC dominance + market regime context
 │   ├── database.py          # Neon asyncpg client
 │   ├── notifier.py          # Discord notifications
 │   ├── burt.py              # Personality + Discord bot
@@ -163,8 +169,8 @@ tradebrain/
 
 ## Phase Roadmap
 
-- ✅ Phase 1-8: Project scaffolding, database, data client, indicators, screener, strategies, signal engine, risk manager
-- ✅ Phase 9: Executor (paper trading ready, live skeleton)
+- ✅ Phase 1-8: Project scaffolding, database, indicators, screener, strategies, signal engine, risk manager
+- ✅ Phase 9: Executor (paper trading ready, live skeleton for Coinbase FCM)
 - ✅ Phase 10: Position monitor
 - ✅ Phase 11: Memory engine
 - ✅ Phase 12: Burt (Discord bot skeleton)

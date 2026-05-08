@@ -21,8 +21,8 @@ class Config(BaseModel):
     # Required
     # ------------------------------------------------------------------
     openrouter_api_key: str = Field(default="")
-    hl_wallet_address: str = Field(default="")
-    hl_api_private_key: str = Field(default="")
+    coinbase_api_key: str = Field(default="")
+    coinbase_api_secret: str = Field(default="")
     database_url: str = Field(default="")
 
     # Burt / Discord
@@ -46,7 +46,6 @@ class Config(BaseModel):
     default_strategy: str = Field(default="rsi_macd")
     default_signal_interval: int = Field(default=300)         # 5 min
     default_max_watchlist: int = Field(default=5)
-    hl_testnet: bool = Field(default=False)
     burt_active_hours_start: int = Field(default=6)
     burt_active_hours_end: int = Field(default=22)
 
@@ -93,8 +92,8 @@ class Config(BaseModel):
     def _required_keys(self) -> list[str]:
         return [
             "openrouter_api_key",
-            "hl_wallet_address",
-            "hl_api_private_key",
+            "coinbase_api_key",
+            "coinbase_api_secret",
             "database_url",
         ]
 
@@ -151,8 +150,8 @@ def _build_config() -> Config:
 
     return Config(
         openrouter_api_key=_env("OPENROUTER_API_KEY"),
-        hl_wallet_address=_env("HL_WALLET_ADDRESS"),
-        hl_api_private_key=_env("HL_API_PRIVATE_KEY"),
+        coinbase_api_key=_env("COINBASE_API_KEY"),
+        coinbase_api_secret=_env("COINBASE_API_SECRET"),
         database_url=_env("DATABASE_URL"),
         discord_bot_token=_env("DISCORD_BOT_TOKEN"),
         discord_channel_id=_env("DISCORD_CHANNEL_ID"),
@@ -166,7 +165,6 @@ def _build_config() -> Config:
         default_strategy=_env("DEFAULT_STRATEGY", "rsi_macd"),
         default_signal_interval=_int("DEFAULT_SIGNAL_INTERVAL", 300),
         default_max_watchlist=_int("DEFAULT_MAX_WATCHLIST", 5),
-        hl_testnet=_bool("HL_TESTNET", False),
         burt_active_hours_start=_int("BURT_ACTIVE_HOURS_START", 6),
         burt_active_hours_end=_int("BURT_ACTIVE_HOURS_END", 22),
     )
