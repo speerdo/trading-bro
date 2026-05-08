@@ -14,6 +14,7 @@
 
 	async function loadAll() {
 		try {
+			let watchlistData: any;
 			[status, trades, signals, stats, watchlistData, positions] = await Promise.all([
 				apiStatus(),
 				apiTrades(),
@@ -22,7 +23,7 @@
 				apiWatchlist(),
 				apiPositions(),
 			]);
-			watchlist = watchlistData.coins || [];
+			watchlist = watchlistData?.coins || [];
 			error = '';
 		} catch (e: any) {
 			error = e.message;

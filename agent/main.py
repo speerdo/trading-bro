@@ -43,7 +43,7 @@ class TradeBrainAgent:
         self.screener = Screener(self.cb)
         self.signal_engine = SignalEngine()
         self.monitor = PositionMonitor(self.executor, self.cb, self.risk)
-        self.burt = Burt(None, self.executor, self.risk)
+        self.burt = Burt(None, self.executor, self.risk, self.screener)
         self.notifier = Notifier(self.burt)
         self.monitor.set_notifier(self.notifier)
         self.executor.set_notifier(self.notifier)
