@@ -17,14 +17,14 @@ Burt is the agent's personality layer. He's conversational, dry, self-aware, and
 | Feature | Status |
 |---------|--------|
 | Market Screener (Option B) | ✅ Scores all 200+ HL markets every 4h |
-| AI Signal Evaluation (Kimi K2.6) | ⏳ Skeleton ready — needs `OPENROUTER_API_KEY` |
+| AI Signal Evaluation (Kimi K2.6) | ✅ Working with OpenRouter |
 | Risk Manager (stops, sizing, circuit breaker) | ✅ Full implementation |
 | Paper Trading | ✅ Ready for testing |
 | Live Trading (CCXT/Hyperliquid) | ⏳ Needs `HL_WALLET_ADDRESS` + `HL_API_PRIVATE_KEY` |
-| Position Monitor | ✅ Skeleton ready |
-| Discord Bot (Burt personality) | ⏳ Needs `DISCORD_BOT_TOKEN` |
-| Semantic Memory (pgvector) | ✅ Schema + embedding API ready |
-| SvelteKit Dashboard | ⏳ Phase 16 (UI not yet built) |
+| Position Monitor | ✅ Full implementation |
+| Discord Bot (Burt personality) | ✅ Skeleton ready — needs `DISCORD_BOT_TOKEN` |
+| Semantic Memory (pgvector) | ✅ Full implementation |
+| SvelteKit Dashboard | ✅ Built with Svelte 5 runes |
 | Neon Postgres Logging | ✅ All tables created |
 
 ## Architecture
@@ -113,15 +113,15 @@ cd ui && npm install && npm run dev
 
 ## Required Environment Variables
 
-| Variable | Phase | Where to Get |
-|---|---|---|
-| `DATABASE_URL` | ✅ Ready | [neon.tech](https://neon.tech) |
-| `OPENROUTER_API_KEY` | ⏳ Phase 7 | [openrouter.ai](https://openrouter.ai) |
-| `HL_WALLET_ADDRESS` | ⏳ Phase 9 | Your Hyperliquid wallet |
-| `HL_API_PRIVATE_KEY` | ⏳ Phase 9 | [app.hyperliquid.xyz/API](https://app.hyperliquid.xyz/API) |
-| `DISCORD_BOT_TOKEN` | ⏳ Phase 12 | [discord.com/developers](https://discord.com/developers) |
-| `DISCORD_CHANNEL_ID` | ⏳ Phase 12 | Right-click channel → Copy ID |
-| `DISCORD_USER_ID` | ⏳ Phase 12 | Right-click your name → Copy ID |
+| Variable | Phase | Status | Where to Get |
+|---|---|---|---|
+| `DATABASE_URL` | Phase 2 | ✅ Ready | [neon.tech](https://neon.tech) |
+| `OPENROUTER_API_KEY` | Phase 7 | ✅ Ready | [openrouter.ai](https://openrouter.ai) |
+| `HL_WALLET_ADDRESS` | Phase 9 | ⏳ Needed | Your Hyperliquid wallet |
+| `HL_API_PRIVATE_KEY` | Phase 9 | ⏳ Needed | [app.hyperliquid.xyz/API](https://app.hyperliquid.xyz/API) |
+| `DISCORD_BOT_TOKEN` | Phase 12 | ⏳ Needed | [discord.com/developers](https://discord.com/developers) |
+| `DISCORD_CHANNEL_ID` | Phase 12 | ⏳ Needed | Right-click channel → Copy ID |
+| `DISCORD_USER_ID` | Phase 12 | ⏳ Needed | Right-click your name → Copy ID |
 
 ## Project Structure
 
@@ -163,13 +163,15 @@ tradebrain/
 
 ## Phase Roadmap
 
-- ✅ Phase 1-6: Project scaffolding, database, data client, indicators, screener, strategies
-- ⏳ Phase 7: Signal engine (blocked on `OPENROUTER_API_KEY`)
-- ✅ Phase 8: Risk manager
-- ⏳ Phase 9: Live executor (blocked on `HL_WALLET_ADDRESS` + `HL_API_PRIVATE_KEY`)
-- ✅ Phase 10: Position monitor skeleton
-- ⏳ Phase 11-12: Burt memory + Discord bot (blocked on `DISCORD_BOT_TOKEN`)
-- ⏳ Phase 13-16: Notifier, FastAPI backend, main loop, SvelteKit dashboard
+- ✅ Phase 1-8: Project scaffolding, database, data client, indicators, screener, strategies, signal engine, risk manager
+- ✅ Phase 9: Executor (paper trading ready, live skeleton)
+- ✅ Phase 10: Position monitor
+- ✅ Phase 11: Memory engine
+- ✅ Phase 12: Burt (Discord bot skeleton)
+- ✅ Phase 13: Notifier
+- ✅ Phase 14: FastAPI backend
+- ✅ Phase 15: Main agent loop
+- ✅ Phase 16: SvelteKit dashboard
 - 🔮 Phase 17+: Integration testing, backtesting, go-live
 
 **Do not enable live trading until paper mode runs cleanly for 2 weeks.**

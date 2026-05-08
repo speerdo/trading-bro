@@ -85,14 +85,15 @@ class SignalEngine:
         }
 
         payload = {
-            "model": "openai/kimi-k2.6",
+            "model": "moonshotai/kimi-k2.6",
             "messages": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": prompt},
             ],
             "temperature": 0.1,
-            "max_tokens": 400,
-            "response_format": {"type": "json_object"},
+            "max_tokens": 3000,
+            # Note: response_format json_object can cause content=None with some models
+            # We parse JSON manually from content instead
         }
 
         resp = await self._client.post(
@@ -101,10 +102,49 @@ class SignalEngine:
         resp.raise_for_status()
         data = resp.json()
 
-        content = data["choices"][0]["message"]["content"]
-        # OpenRouter may return a string containing JSON
-        parsed = json.loads(content)
-        return parsed
+        message = data["choices"][0]["message"]
+        content = message.get("content")
+
+        # Fallback: if content is None but reasoning exists, extract JSON from reasoning
+        if content is None:
+            content = message.get("reasoning", "")
+
+        return self._extract_json(content)
+
+    @staticmethod
+    def _extract_json(text: str) -> dict:
+        """Extract JSON object from text, handling markdown code blocks."""
+        if not text:
+            return {"direction": "none", "confidence": 0.0}
+
+        text = text.strip()
+
+        # Try direct parse first
+        try:
+            return json.loads(text)
+        except json.JSONDecodeError:
+            pass
+
+        # Try extracting from markdown code block
+        import re
+        pattern = r"```(?:json)?\s*(\{.*?\})\s*```"
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                pass
+
+        # Try finding first JSON object in text
+        pattern = r"(\{[^{}]*(?:\{[^{}]*\}[^{}]*)*\})"
+        for match in re.finditer(pattern, text, re.DOTALL):
+            try:
+                return json.loads(match.group(1))
+            except json.JSONDecodeError:
+                continue
+
+        logger.warning(f"Could not extract JSON from LLM response: {text[:200]}")
+        return {"direction": "none", "confidence": 0.0}
 
     async def _log_signal(self, symbol: str, strategy_name: str,
                           signal: SignalResult, indicators: dict) -> None:
@@ -161,7 +201,7 @@ class SignalEngine:
             "X-Title": "TradeBrain",
         }
         payload = {
-            "model": "openai/kimi-k2.6",
+            "model": "moonshotai/kimi-k2.6",
             "messages": messages,
             "temperature": 0.4,
             "max_tokens": 512,
