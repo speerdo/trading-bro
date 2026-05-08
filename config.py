@@ -49,12 +49,18 @@ class Config(BaseModel):
     burt_active_hours_start: int = Field(default=6)
     burt_active_hours_end: int = Field(default=22)
 
-    # Derived / runtime
+    # Config keys that can be hot-reloaded from DB
+    leverage: int = Field(default=3)
+    risk_per_trade: float = Field(default=0.01)
+    daily_loss_limit: float = Field(default=0.05)
+    strategy: str = Field(default="rsi_macd")
+    signal_interval: int = Field(default=300)
+    max_watchlist: int = Field(default=5)
     min_confidence: float = Field(default=0.65)
     atr_multiplier: float = Field(default=1.5)
     take_profit_rr: float = Field(default=2.0)
     fixed_stop_pct: float = Field(default=0.02)
-    stop_loss_method: str = Field(default="atr")              # 'atr' | 'fixed'
+    stop_loss_method: str = Field(default="atr")
 
     # ------------------------------------------------------------------
     # Validators

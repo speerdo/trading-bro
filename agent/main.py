@@ -125,9 +125,8 @@ class TradeBrainAgent:
             return
 
         try:
-            from agent.data_client import HyperliquidDataClient
-            candles_15m = await self.cb.get_candles(product_id, "FIFTEEN_MINUTE", limit=100)
-            candles_1h  = await self.cb.get_candles(product_id, "ONE_HOUR", limit=50)
+            candles_15m = await self.cb.get_candles(product_id, "FIFTEEN_MINUTE")
+            candles_1h  = await self.cb.get_candles(product_id, "ONE_HOUR")
 
             if len(candles_15m) < 30 or len(candles_1h) < 20:
                 return
