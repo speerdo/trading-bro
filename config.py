@@ -1,0 +1,172 @@
+"""
+Central configuration for TradeBrain.
+Loads from .env, provides defaults, hot-reloadable.
+"""
+
+import os
+from pathlib import Path
+from dotenv import load_dotenv
+from pydantic import BaseModel, Field, field_validator
+from loguru import logger
+
+# Load .env from project root
+BASE_DIR = Path(__file__).parent.resolve()
+load_dotenv(BASE_DIR / ".env")
+
+
+class Config(BaseModel):
+    """TradeBrain configuration — all values loaded from env or defaults."""
+
+    # ------------------------------------------------------------------
+    # Required
+    # ------------------------------------------------------------------
+    openrouter_api_key: str = Field(default="")
+    hl_wallet_address: str = Field(default="")
+    hl_api_private_key: str = Field(default="")
+    database_url: str = Field(default="")
+
+    # Burt / Discord
+    discord_bot_token: str = Field(default="")
+    discord_channel_id: str = Field(default="")
+    discord_user_id: str = Field(default="")
+
+    # ------------------------------------------------------------------
+    # Optional / notifications
+    # ------------------------------------------------------------------
+    discord_webhook_url: str = Field(default="")
+    moondev_api_key: str = Field(default="")
+
+    # ------------------------------------------------------------------
+    # Trading defaults (all overridable in UI)
+    # ------------------------------------------------------------------
+    paper_trading: bool = Field(default=True)
+    default_leverage: int = Field(default=3)
+    default_risk_per_trade: float = Field(default=0.01)       # 1%
+    default_daily_loss_limit: float = Field(default=0.05)     # 5%
+    default_strategy: str = Field(default="rsi_macd")
+    default_signal_interval: int = Field(default=300)         # 5 min
+    default_max_watchlist: int = Field(default=5)
+    hl_testnet: bool = Field(default=False)
+    burt_active_hours_start: int = Field(default=6)
+    burt_active_hours_end: int = Field(default=22)
+
+    # Derived / runtime
+    min_confidence: float = Field(default=0.65)
+    atr_multiplier: float = Field(default=1.5)
+    take_profit_rr: float = Field(default=2.0)
+    fixed_stop_pct: float = Field(default=0.02)
+    stop_loss_method: str = Field(default="atr")              # 'atr' | 'fixed'
+
+    # ------------------------------------------------------------------
+    # Validators
+    # ------------------------------------------------------------------
+    @field_validator("database_url")
+    @classmethod
+    def check_db_url(cls, v: str) -> str:
+        if not v.startswith("postgresql://"):
+            logger.warning("DATABASE_URL does not look like a Postgres connection string")
+        return v
+
+    @field_validator("default_leverage")
+    @classmethod
+    def check_leverage(cls, v: int) -> int:
+        return max(1, min(50, v))
+
+    @field_validator("default_risk_per_trade", "default_daily_loss_limit")
+    @classmethod
+    def check_pct(cls, v: float) -> float:
+        return max(0.001, min(0.20, float(v)))
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+    def is_required_key_present(self, key: str) -> bool:
+        """Check if a specific env var is present."""
+        val = getattr(self, key, "")
+        return bool(val and val.strip())
+
+    def missing_keys(self) -> list[str]:
+        """Return list of required keys that are missing."""
+        return [k for k in self._required_keys if not self.is_required_key_present(k)]
+
+    @property
+    def _required_keys(self) -> list[str]:
+        return [
+            "openrouter_api_key",
+            "hl_wallet_address",
+            "hl_api_private_key",
+            "database_url",
+        ]
+
+
+# ------------------------------------------------------------------
+# Singleton + hot-reload helpers
+# ------------------------------------------------------------------
+_config_instance: Config | None = None
+
+
+def get_config() -> Config:
+    """Return the cached config singleton."""
+    global _config_instance
+    if _config_instance is None:
+        _config_instance = _build_config()
+    return _config_instance
+
+
+def reload_config() -> Config:
+    """Force reload from env (useful after UI changes)."""
+    global _config_instance
+    _config_instance = _build_config()
+    logger.info("Config reloaded from environment")
+    return _config_instance
+
+
+def set_config_key(key: str, value: str) -> None:
+    """Update a single config key in-memory (called from FastAPI)."""
+    cfg = get_config()
+    if key in cfg.model_fields:
+        # Coerce booleans
+        field_info = cfg.model_fields[key]
+        if field_info.annotation == bool or str(field_info.annotation) == "bool":
+            value = str(value).lower() in ("true", "1", "yes", "on")
+        setattr(cfg, key, value)
+        logger.info(f"Config updated: {key} = {value}")
+    else:
+        logger.warning(f"Attempted to set unknown config key: {key}")
+
+
+def _build_config() -> Config:
+    """Construct Config from current environment."""
+    def _env(key: str, default="") -> str:
+        return os.getenv(key, os.getenv(key.upper(), default))
+
+    def _bool(key: str, default: bool = False) -> bool:
+        return _env(key, str(default)).lower() in ("true", "1", "yes", "on")
+
+    def _int(key: str, default: int = 0) -> int:
+        return int(_env(key, str(default)))
+
+    def _float(key: str, default: float = 0.0) -> float:
+        return float(_env(key, str(default)))
+
+    return Config(
+        openrouter_api_key=_env("OPENROUTER_API_KEY"),
+        hl_wallet_address=_env("HL_WALLET_ADDRESS"),
+        hl_api_private_key=_env("HL_API_PRIVATE_KEY"),
+        database_url=_env("DATABASE_URL"),
+        discord_bot_token=_env("DISCORD_BOT_TOKEN"),
+        discord_channel_id=_env("DISCORD_CHANNEL_ID"),
+        discord_user_id=_env("DISCORD_USER_ID"),
+        discord_webhook_url=_env("DISCORD_WEBHOOK_URL"),
+        moondev_api_key=_env("MOONDEV_API_KEY"),
+        paper_trading=_bool("PAPER_TRADING", True),
+        default_leverage=_int("DEFAULT_LEVERAGE", 3),
+        default_risk_per_trade=_float("DEFAULT_RISK_PER_TRADE", 0.01),
+        default_daily_loss_limit=_float("DEFAULT_DAILY_LOSS_LIMIT", 0.05),
+        default_strategy=_env("DEFAULT_STRATEGY", "rsi_macd"),
+        default_signal_interval=_int("DEFAULT_SIGNAL_INTERVAL", 300),
+        default_max_watchlist=_int("DEFAULT_MAX_WATCHLIST", 5),
+        hl_testnet=_bool("HL_TESTNET", False),
+        burt_active_hours_start=_int("BURT_ACTIVE_HOURS_START", 6),
+        burt_active_hours_end=_int("BURT_ACTIVE_HOURS_END", 22),
+    )

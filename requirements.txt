@@ -1,0 +1,29 @@
+# Exchange + data
+ccxt>=4.4.87
+# coincurve>=18.0.0  # BLOCKED on Python 3.14: cffi compat issue. Needed for live HL ECDSA signing.
+aiohttp>=3.9.0
+websockets>=12.0
+
+# Indicators
+pandas>=2.2.0
+# pandas-ta>=0.3.14b  # BLOCKED on Python 3.14: version guard prevents install. Indicators are implemented manually.
+numpy>=1.26.0
+
+# Database
+asyncpg>=0.29.0
+pgvector>=0.2.4
+
+# API + config
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+python-dotenv>=1.0.0
+pydantic>=2.7.0
+httpx>=0.27.0
+
+# Utilities
+loguru>=0.7.2
+apscheduler>=3.10.4
+
+# Burt / Discord
+discord.py>=2.3.0
+pytz>=2024.1

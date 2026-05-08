@@ -1,0 +1,177 @@
+"""
+Signal Engine — Kimi K2.6 via OpenRouter
+
+Builds structured prompts from strategy + indicators, sends to LLM,
+returns SignalResult. Everything is logged to DB regardless of outcome.
+"""
+
+import json
+from typing import Any
+
+import httpx
+from loguru import logger
+
+import config
+from strategies.base import BaseStrategy, SignalResult
+from agent.database import get_db
+
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_EMBEDDING_URL = "https://openrouter.ai/api/v1/embeddings"
+
+SYSTEM_PROMPT = """\
+You are TradeBrain, an expert crypto futures trading signal evaluator.
+You analyze live technical indicator data and determine whether a trading
+signal meets the defined strategy criteria for a leveraged position on Hyperliquid.
+
+Rules:
+- Only signal "long" or "short" when ALL required conditions are clearly met
+- When in doubt, return "none" — missing a trade is better than a bad trade
+- Be concise in reasoning — max 2 sentences
+- ALWAYS return valid JSON only, no markdown, no preamble
+- Never recommend a trade without clear technical justification from the data provided
+- Consider funding rate when provided — extreme positive funding favors shorts, extreme negative favors longs
+"""
+
+
+class SignalEngine:
+    """Handles OpenRouter API calls for signal evaluation."""
+
+    def __init__(self):
+        self.cfg = config.get_config()
+        self._client = httpx.AsyncClient(timeout=httpx.Timeout(30.0))
+        self._available = bool(self.cfg.openrouter_api_key)
+        if not self._available:
+            logger.warning("SignalEngine: OPENROUTER_API_KEY missing — signal evaluation disabled")
+
+    # ------------------------------------------------------------------
+    # Signal evaluation
+    # ------------------------------------------------------------------
+
+    async def evaluate(self, symbol: str, strategy: BaseStrategy,
+                       indicators: dict) -> SignalResult:
+        """
+        Run full LLM evaluation for one symbol + strategy.
+        Falls back to "none" signal if key missing / API error / parse failure.
+        """
+        llm_response = {"direction": "none", "confidence": 0.0}
+
+        if self._available:
+            try:
+                llm_response = await self._call_llm(symbol, strategy, indicators)
+            except Exception as exc:
+                logger.error(f"LLM call failed for {symbol}: {exc}")
+                llm_response = {"direction": "none", "confidence": 0.0}
+
+        # Strategy may apply its own hard gates on top of LLM output
+        signal = strategy.parse_response(llm_response, indicators)
+
+        # Override with LLM-derived entry price if strategy didn't provide one
+        if signal.entry_price is None:
+            signal.entry_price = indicators.get("15m", {}).get("price")
+
+        # Log to DB
+        await self._log_signal(symbol, strategy.name, signal, indicators)
+        return signal
+
+    async def _call_llm(self, symbol: str, strategy: BaseStrategy,
+                        indicators: dict) -> dict:
+        """POST to OpenRouter and parse the JSON response."""
+        prompt = strategy.build_prompt(indicators, symbol)
+
+        headers = {
+            "Authorization": f"Bearer {self.cfg.openrouter_api_key}",
+            "HTTP-Referer": "https://github.com/tradebrain",
+            "X-Title": "TradeBrain",
+        }
+
+        payload = {
+            "model": "openai/kimi-k2.6",
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            "temperature": 0.1,
+            "max_tokens": 400,
+            "response_format": {"type": "json_object"},
+        }
+
+        resp = await self._client.post(
+            OPENROUTER_URL, headers=headers, json=payload
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        content = data["choices"][0]["message"]["content"]
+        # OpenRouter may return a string containing JSON
+        parsed = json.loads(content)
+        return parsed
+
+    async def _log_signal(self, symbol: str, strategy_name: str,
+                          signal: SignalResult, indicators: dict) -> None:
+        i15 = indicators.get("15m", {})
+        try:
+            db = await get_db()
+            await db.log_signal({
+                "symbol": symbol,
+                "direction": signal.direction,
+                "strategy": strategy_name,
+                "confidence": signal.confidence,
+                "reasoning": signal.reasoning,
+                "acted_on": False,
+                "skip_reason": "",
+                "rsi_15m": i15.get("rsi"),
+                "macd_hist_15m": i15.get("macd_hist"),
+                "atr_15m": i15.get("atr"),
+                "price": i15.get("price"),
+            })
+        except Exception as exc:
+            logger.warning(f"Failed to log signal: {exc}")
+
+    # ------------------------------------------------------------------
+    # Embeddings (for Burt semantic memory)
+    # ------------------------------------------------------------------
+
+    async def get_embedding(self, text: str) -> list[float]:
+        """Generate 1536-dim embedding via OpenRouter (text-embedding-3-small)."""
+        headers = {
+            "Authorization": f"Bearer {self.cfg.openrouter_api_key}",
+            "HTTP-Referer": "https://github.com/tradebrain",
+            "X-Title": "TradeBrain",
+        }
+        payload = {
+            "model": "openai/text-embedding-3-small",
+            "input": text,
+        }
+        resp = await self._client.post(
+            OPENROUTER_EMBEDDING_URL, headers=headers, json=payload
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["data"][0]["embedding"]
+
+    # ------------------------------------------------------------------
+    # Burt conversation
+    # ------------------------------------------------------------------
+
+    async def chat(self, messages: list[dict]) -> str:
+        """Generic chat completion for Burt personality responses."""
+        headers = {
+            "Authorization": f"Bearer {self.cfg.openrouter_api_key}",
+            "HTTP-Referer": "https://github.com/tradebrain",
+            "X-Title": "TradeBrain",
+        }
+        payload = {
+            "model": "openai/kimi-k2.6",
+            "messages": messages,
+            "temperature": 0.4,
+            "max_tokens": 512,
+        }
+        resp = await self._client.post(
+            OPENROUTER_URL, headers=headers, json=payload
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        return data["choices"][0]["message"]["content"]
+
+    async def close(self) -> None:
+        await self._client.aclose()
