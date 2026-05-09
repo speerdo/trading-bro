@@ -4,7 +4,7 @@ Strategy 3: EMA Trend + Pullback
 Use case: Strong trending markets. Buys/sells pullbacks to the 20 EMA.
 """
 
-from strategies.base import BaseStrategy, SignalResult
+from strategies.base import BaseStrategy, SignalResult, coerce_confidence
 
 
 class EmaPullbackStrategy(BaseStrategy):
@@ -39,7 +39,7 @@ Return ONLY valid JSON with keys: direction, confidence, reasoning, entry_price,
         i15 = indicators.get("15m", {})
         i1h = indicators.get("1h", {})
         direction = response.get("direction", "none")
-        confidence = float(response.get("confidence", 0.0))
+        confidence = coerce_confidence(response.get("confidence"))
 
         price_1h = i1h.get("price")
         ema20_1h = i1h.get("ema20")

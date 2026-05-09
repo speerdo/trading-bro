@@ -47,3 +47,37 @@ class BaseStrategy(ABC):
             reasoning="Parse failure or no clear setup",
             invalidation="",
         )
+
+
+# Some LLMs return categorical confidence ("low" / "medium" / "high") despite
+# the prompt asking for a number. Map them to reasonable midpoints instead of
+# crashing on float("low").
+_CATEGORICAL_CONFIDENCE = {
+    "none": 0.0, "very_low": 0.15, "very low": 0.15,
+    "low": 0.30, "medium_low": 0.40, "medium-low": 0.40,
+    "medium": 0.55, "med": 0.55,
+    "medium_high": 0.70, "medium-high": 0.70,
+    "high": 0.80, "very_high": 0.92, "very high": 0.92,
+}
+
+
+def coerce_confidence(raw: Any) -> float:
+    """Coerce an LLM-returned confidence value into a 0.0-1.0 float."""
+    if raw is None:
+        return 0.0
+    if isinstance(raw, bool):  # bool is a subclass of int — treat False/True as 0/1
+        return float(raw)
+    if isinstance(raw, (int, float)):
+        v = float(raw)
+    else:
+        s = str(raw).strip().lower().rstrip("%")
+        try:
+            v = float(s)
+        except ValueError:
+            return _CATEGORICAL_CONFIDENCE.get(s, 0.0)
+    # Allow models to return 0-100 instead of 0-1. Use a threshold (>=2) so that
+    # near-miss values like 1.2 clamp to 1.0 rather than getting divided down to
+    # 0.012 — much closer to model intent.
+    if v >= 2.0:
+        v = v / 100.0
+    return max(0.0, min(1.0, v))

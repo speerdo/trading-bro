@@ -60,21 +60,24 @@ def set_agent_state(executor: Executor, risk_manager: RiskManager, screener: Scr
 @app.get("/api/status")
 async def get_status() -> dict:
     cfg = config.get_config()
-    rm = _risk_manager
-    # Return the LIVE hot-reload values, not the static `default_*` ones.
-    # Risk-manager state is the most authoritative source for risk knobs since
-    # it pulls from the DB every loop; fall back to cfg for keys it doesn't track.
-    rm_state = rm.state if rm else None
+    rm_state = _risk_manager.state if _risk_manager else None
+    # Tunable knobs come from `cfg` because `set_config_key` updates it
+    # synchronously on every PATCH /api/config — so the UI sees the new value
+    # immediately. RiskManager.state is a *lagging* cache that only refreshes
+    # once per loop iteration (every signal_interval seconds), so reading knobs
+    # from there caused the slider to snap back to the old value before the
+    # agent had a chance to sync. RiskManager.state is still authoritative for
+    # genuinely dynamic state (circuit breaker, daily loss, manual pause).
     return {
         "paper_trading": cfg.paper_trading,
         "strategy": cfg.strategy,
-        "leverage": rm_state.leverage if rm_state else cfg.leverage,
-        "risk_per_trade": rm_state.risk_per_trade_pct if rm_state else cfg.risk_per_trade,
-        "daily_loss_limit": rm_state.daily_loss_limit_pct if rm_state else cfg.daily_loss_limit,
-        "min_confidence": rm_state.min_confidence if rm_state else cfg.min_confidence,
-        "atr_multiplier": rm_state.atr_multiplier if rm_state else cfg.atr_multiplier,
-        "take_profit_rr": rm_state.take_profit_rr if rm_state else cfg.take_profit_rr,
-        "stop_loss_method": rm_state.stop_loss_method if rm_state else cfg.stop_loss_method,
+        "leverage": cfg.leverage,
+        "risk_per_trade": cfg.risk_per_trade,
+        "daily_loss_limit": cfg.daily_loss_limit,
+        "min_confidence": cfg.min_confidence,
+        "atr_multiplier": cfg.atr_multiplier,
+        "take_profit_rr": cfg.take_profit_rr,
+        "stop_loss_method": cfg.stop_loss_method,
         "signal_interval": cfg.signal_interval,
         "max_watchlist": cfg.max_watchlist,
         "circuit_breaker_active": rm_state.circuit_breaker_active if rm_state else False,

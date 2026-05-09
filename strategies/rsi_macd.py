@@ -4,7 +4,7 @@ Strategy 1: RSI + MACD Momentum (Default)
 Use case: Trending markets. Catches momentum reversals on 15m chart.
 """
 
-from strategies.base import BaseStrategy, SignalResult
+from strategies.base import BaseStrategy, SignalResult, coerce_confidence
 
 
 class RsiMacdStrategy(BaseStrategy):
@@ -49,7 +49,7 @@ Return ONLY valid JSON with keys: direction, confidence, reasoning, entry_price,
 
         # Attempt LLM-chosen values first, fallback to programmatic check
         direction = response.get("direction", "none")
-        confidence = float(response.get("confidence", 0.0))
+        confidence = coerce_confidence(response.get("confidence"))
 
         # ---- Hard gate: long requires ALL conditions ----
         if direction == "long":

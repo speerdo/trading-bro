@@ -5,6 +5,7 @@ Loads from .env, provides defaults, hot-reloadable.
 
 import os
 from pathlib import Path
+from typing import Any
 from dotenv import load_dotenv
 from pydantic import BaseModel, Field, field_validator
 from loguru import logger
@@ -126,18 +127,33 @@ def reload_config() -> Config:
     return _config_instance
 
 
-def set_config_key(key: str, value: str) -> None:
-    """Update a single config key in-memory (called from FastAPI)."""
+def set_config_key(key: str, value: Any) -> None:
+    """Update a single config key in-memory (called from FastAPI / DB sync).
+
+    Coerces the incoming value to the field's annotated type. Without this, ints
+    and floats stored as TEXT in agent_config get re-injected as strings and
+    silently break arithmetic (e.g. `cfg.signal_interval` becomes "300", and
+    `interval // 300` raises TypeError).
+    """
     cfg = get_config()
-    if key in cfg.model_fields:
-        # Coerce booleans
-        field_info = cfg.model_fields[key]
-        if field_info.annotation == bool or str(field_info.annotation) == "bool":
-            value = str(value).lower() in ("true", "1", "yes", "on")
-        setattr(cfg, key, value)
-        logger.info(f"Config updated: {key} = {value}")
-    else:
+    if key not in cfg.model_fields:
         logger.warning(f"Attempted to set unknown config key: {key}")
+        return
+    annotation = cfg.model_fields[key].annotation
+    try:
+        if annotation is bool:
+            coerced: Any = str(value).strip().lower() in ("true", "1", "yes", "on")
+        elif annotation is int:
+            coerced = int(float(value))
+        elif annotation is float:
+            coerced = float(value)
+        else:
+            coerced = value
+    except (ValueError, TypeError) as exc:
+        logger.warning(f"Could not coerce config '{key}'={value!r} to {annotation}: {exc}")
+        return
+    setattr(cfg, key, coerced)
+    logger.info(f"Config updated: {key} = {coerced!r}")
 
 
 def _build_config() -> Config:

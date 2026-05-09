@@ -207,10 +207,16 @@ class TradeBrainAgent:
         self._shutdown.set()
         self.monitor.stop()
         self.burt.stop()
-        if self._burt_task:
-            self._burt_task.cancel()
-        if self._api_task:
-            self._api_task.cancel()
+
+        # Cancel AND await the background tasks. Without the await, uvicorn's
+        # lifespan task is left mid-queue.get() when the event loop closes,
+        # which raises "Event loop is closed" during GC.
+        pending = [t for t in (self._burt_task, self._api_task) if t]
+        for t in pending:
+            t.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
         await self.signal_engine.close()
         await self.cb.close()
         if self.db:

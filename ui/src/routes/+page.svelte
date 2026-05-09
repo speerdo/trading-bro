@@ -12,6 +12,13 @@
 	let error = $state('');
 	let activeTab = $state('positions');
 
+	// In-flight slider values: overlays `status` so the readout updates live
+	// while dragging, before the backend round-trip lands.
+	let local: Record<string, number | string> = $state({});
+	// Per-key save state for the ●/✓/✗ indicator next to each control.
+	let saveStatus: Record<string, 'saving' | 'saved' | 'error'> = $state({});
+	const savedTimers: Record<string, ReturnType<typeof setTimeout>> = {};
+
 	async function loadAll() {
 		try {
 			let watchlistData: any;
@@ -63,12 +70,33 @@
 		}
 	}
 
-	async function updateConfig(key: string, value: string) {
+	/** Display value: prefer in-flight local override, fall back to last-known server state. */
+	function val(key: keyof Status): any {
+		return local[key as string] !== undefined ? local[key as string] : status?.[key];
+	}
+
+	/** Live update from `oninput` (fires on every drag tick). No network call. */
+	function setLocal(key: string, value: number | string) {
+		local[key] = value;
+	}
+
+	/** Commit from `onchange` (fires on release / select). Sends API call, tracks status. */
+	async function commit(key: string, value: number | string) {
+		local[key] = value;
+		saveStatus[key] = 'saving';
+		if (savedTimers[key]) clearTimeout(savedTimers[key]);
 		try {
-			await apiUpdateConfig(key, value);
+			await apiUpdateConfig(key, String(value));
 			await loadAll();
+			// status now reflects the new value — drop the override so polling can take over.
+			delete local[key];
+			saveStatus[key] = 'saved';
+			savedTimers[key] = setTimeout(() => {
+				if (saveStatus[key] === 'saved') delete saveStatus[key];
+			}, 1800);
 		} catch (e: any) {
-			error = e.message;
+			saveStatus[key] = 'error';
+			error = `Failed to save ${key}: ${e.message}`;
 		}
 	}
 
@@ -117,64 +145,140 @@
 		<aside class="sidebar">
 			<div class="card">
 				<h3>Controls</h3>
+
+				{#snippet indicator(key: string)}
+					{#if saveStatus[key] === 'saving'}
+						<span class="indicator saving">● saving…</span>
+					{:else if saveStatus[key] === 'saved'}
+						<span class="indicator saved">✓ saved</span>
+					{:else if saveStatus[key] === 'error'}
+						<span class="indicator failed">✗ failed</span>
+					{/if}
+				{/snippet}
+
 				{#if status}
 					<div class="control-group">
-						<label>Strategy</label>
-						<select value={status.strategy} onchange={(e) => updateConfig('strategy', e.currentTarget.value)}>
+						<div class="control-header">
+							<span class="control-name">Strategy</span>
+							<span class="control-value">{val('strategy')}</span>
+							{@render indicator('strategy')}
+						</div>
+						<select value={val('strategy')} onchange={(e) => commit('strategy', e.currentTarget.value)}>
 							<option value="rsi_macd">RSI + MACD</option>
 							<option value="bollinger">Bollinger</option>
 							<option value="ema_pullback">EMA Pullback</option>
 						</select>
 					</div>
+
 					<div class="control-group">
-						<label>Leverage: {status.leverage}x</label>
-						<input type="range" min="1" max="20" value={status.leverage}
-							onchange={(e) => updateConfig('leverage', e.currentTarget.value)} />
+						<div class="control-header">
+							<span class="control-name">Leverage</span>
+							<span class="control-value">{Number(val('leverage'))}×</span>
+							{@render indicator('leverage')}
+						</div>
+						<input type="range" min="1" max="20" step="1"
+							value={Number(val('leverage'))}
+							oninput={(e) => setLocal('leverage', parseInt(e.currentTarget.value))}
+							onchange={(e) => commit('leverage', parseInt(e.currentTarget.value))} />
 					</div>
+
 					<div class="control-group">
-						<label>Risk/Trade: {(status.risk_per_trade * 100).toFixed(1)}%</label>
-						<input type="range" min="0.5" max="5" step="0.1" value={status.risk_per_trade * 100}
-							onchange={(e) => updateConfig('risk_per_trade', (parseFloat(e.currentTarget.value) / 100).toString())} />
+						<div class="control-header">
+							<span class="control-name">Risk / Trade</span>
+							<span class="control-value">{(Number(val('risk_per_trade')) * 100).toFixed(1)}%</span>
+							{@render indicator('risk_per_trade')}
+						</div>
+						<input type="range" min="0.5" max="5" step="0.1"
+							value={Number(val('risk_per_trade')) * 100}
+							oninput={(e) => setLocal('risk_per_trade', parseFloat(e.currentTarget.value) / 100)}
+							onchange={(e) => commit('risk_per_trade', parseFloat(e.currentTarget.value) / 100)} />
 					</div>
+
 					<div class="control-group">
-						<label>Daily Loss Limit: {(status.daily_loss_limit * 100).toFixed(0)}%</label>
-						<input type="range" min="1" max="20" step="1" value={status.daily_loss_limit * 100}
-							onchange={(e) => updateConfig('daily_loss_limit', (parseFloat(e.currentTarget.value) / 100).toString())} />
+						<div class="control-header">
+							<span class="control-name">Daily Loss Limit</span>
+							<span class="control-value">{(Number(val('daily_loss_limit')) * 100).toFixed(0)}%</span>
+							{@render indicator('daily_loss_limit')}
+						</div>
+						<input type="range" min="1" max="20" step="1"
+							value={Number(val('daily_loss_limit')) * 100}
+							oninput={(e) => setLocal('daily_loss_limit', parseFloat(e.currentTarget.value) / 100)}
+							onchange={(e) => commit('daily_loss_limit', parseFloat(e.currentTarget.value) / 100)} />
 					</div>
+
 					<div class="control-group">
-						<label>
-							Min Confidence: {(status.min_confidence * 100).toFixed(0)}%
-							<span class="hint">↓ = more trades</span>
-						</label>
-						<input type="range" min="30" max="95" step="1" value={status.min_confidence * 100}
-							onchange={(e) => updateConfig('min_confidence', (parseFloat(e.currentTarget.value) / 100).toString())} />
+						<div class="control-header">
+							<span class="control-name">
+								Min Confidence
+								<span class="hint">↓ = more trades</span>
+							</span>
+							<span class="control-value">{(Number(val('min_confidence')) * 100).toFixed(0)}%</span>
+							{@render indicator('min_confidence')}
+						</div>
+						<input type="range" min="30" max="95" step="1"
+							value={Number(val('min_confidence')) * 100}
+							oninput={(e) => setLocal('min_confidence', parseFloat(e.currentTarget.value) / 100)}
+							onchange={(e) => commit('min_confidence', parseFloat(e.currentTarget.value) / 100)} />
 					</div>
+
 					<div class="control-group">
-						<label>ATR Multiplier (stop): {status.atr_multiplier.toFixed(1)}x</label>
-						<input type="range" min="0.5" max="5" step="0.1" value={status.atr_multiplier}
-							onchange={(e) => updateConfig('atr_multiplier', e.currentTarget.value)} />
+						<div class="control-header">
+							<span class="control-name">ATR Multiplier (stop)</span>
+							<span class="control-value">{Number(val('atr_multiplier')).toFixed(1)}×</span>
+							{@render indicator('atr_multiplier')}
+						</div>
+						<input type="range" min="0.5" max="5" step="0.1"
+							value={Number(val('atr_multiplier'))}
+							oninput={(e) => setLocal('atr_multiplier', parseFloat(e.currentTarget.value))}
+							onchange={(e) => commit('atr_multiplier', parseFloat(e.currentTarget.value))} />
 					</div>
+
 					<div class="control-group">
-						<label>Take Profit RR: {status.take_profit_rr.toFixed(1)}</label>
-						<input type="range" min="0.5" max="10" step="0.1" value={status.take_profit_rr}
-							onchange={(e) => updateConfig('take_profit_rr', e.currentTarget.value)} />
+						<div class="control-header">
+							<span class="control-name">Take Profit RR</span>
+							<span class="control-value">{Number(val('take_profit_rr')).toFixed(1)}</span>
+							{@render indicator('take_profit_rr')}
+						</div>
+						<input type="range" min="0.5" max="10" step="0.1"
+							value={Number(val('take_profit_rr'))}
+							oninput={(e) => setLocal('take_profit_rr', parseFloat(e.currentTarget.value))}
+							onchange={(e) => commit('take_profit_rr', parseFloat(e.currentTarget.value))} />
 					</div>
+
 					<div class="control-group">
-						<label>Stop Method</label>
-						<select value={status.stop_loss_method} onchange={(e) => updateConfig('stop_loss_method', e.currentTarget.value)}>
+						<div class="control-header">
+							<span class="control-name">Stop Method</span>
+							<span class="control-value">{val('stop_loss_method')}</span>
+							{@render indicator('stop_loss_method')}
+						</div>
+						<select value={val('stop_loss_method')} onchange={(e) => commit('stop_loss_method', e.currentTarget.value)}>
 							<option value="atr">ATR</option>
 							<option value="fixed">Fixed %</option>
 						</select>
 					</div>
+
 					<div class="control-group">
-						<label>Signal Interval: {status.signal_interval}s</label>
-						<input type="range" min="60" max="3600" step="30" value={status.signal_interval}
-							onchange={(e) => updateConfig('signal_interval', e.currentTarget.value)} />
+						<div class="control-header">
+							<span class="control-name">Signal Interval</span>
+							<span class="control-value">{Number(val('signal_interval'))}s</span>
+							{@render indicator('signal_interval')}
+						</div>
+						<input type="range" min="60" max="3600" step="30"
+							value={Number(val('signal_interval'))}
+							oninput={(e) => setLocal('signal_interval', parseInt(e.currentTarget.value))}
+							onchange={(e) => commit('signal_interval', parseInt(e.currentTarget.value))} />
 					</div>
+
 					<div class="control-group">
-						<label>Max Watchlist: {status.max_watchlist}</label>
-						<input type="range" min="1" max="20" step="1" value={status.max_watchlist}
-							onchange={(e) => updateConfig('max_watchlist', e.currentTarget.value)} />
+						<div class="control-header">
+							<span class="control-name">Max Watchlist</span>
+							<span class="control-value">{Number(val('max_watchlist'))}</span>
+							{@render indicator('max_watchlist')}
+						</div>
+						<input type="range" min="1" max="20" step="1"
+							value={Number(val('max_watchlist'))}
+							oninput={(e) => setLocal('max_watchlist', parseInt(e.currentTarget.value))}
+							onchange={(e) => commit('max_watchlist', parseInt(e.currentTarget.value))} />
 					</div>
 				{/if}
 				<button class="btn btn-primary" onclick={runScreener}>Re-run Screener</button>
@@ -403,17 +507,65 @@
 		margin-bottom: 1rem;
 	}
 
-	.control-group label {
-		display: block;
-		font-size: 0.8rem;
-		color: var(--text-secondary);
-		margin-bottom: 0.25rem;
+	.control-header {
+		display: flex;
+		align-items: baseline;
+		justify-content: space-between;
+		gap: 0.5rem;
+		margin-bottom: 0.35rem;
+		flex-wrap: wrap;
 	}
 
-	.control-group label .hint {
+	.control-name {
+		font-size: 0.8rem;
+		color: var(--text-secondary);
+		display: inline-flex;
+		align-items: baseline;
+		gap: 0.4rem;
+	}
+
+	.control-value {
+		font-size: 0.95rem;
+		font-weight: 600;
+		color: var(--text-primary);
+		font-variant-numeric: tabular-nums;
+		background: var(--bg-tertiary);
+		padding: 0.1rem 0.5rem;
+		border-radius: 4px;
+		min-width: 3.5rem;
+		text-align: right;
+		margin-left: auto;
+	}
+
+	.indicator {
+		font-size: 0.7rem;
+		font-weight: 500;
+		padding: 0.05rem 0.35rem;
+		border-radius: 4px;
+		white-space: nowrap;
+	}
+	.indicator.saving {
+		color: var(--accent-blue, #6ea8ff);
+		background: rgba(110, 168, 255, 0.12);
+		animation: pulse 1.2s ease-in-out infinite;
+	}
+	.indicator.saved {
+		color: var(--accent-green, #3fb950);
+		background: rgba(63, 185, 80, 0.12);
+	}
+	.indicator.failed {
+		color: var(--accent-red, #ff4455);
+		background: rgba(255, 68, 85, 0.12);
+	}
+
+	@keyframes pulse {
+		0%, 100% { opacity: 1; }
+		50%      { opacity: 0.5; }
+	}
+
+	.hint {
 		font-size: 0.7rem;
 		color: var(--accent-blue, #6ea8ff);
-		margin-left: 0.4rem;
 		opacity: 0.85;
 	}
 
@@ -425,6 +577,12 @@
 		color: var(--text-primary);
 		border: 1px solid var(--bg-tertiary);
 		border-radius: 6px;
+	}
+
+	.control-group input[type="range"] {
+		padding: 0;
+		accent-color: var(--accent-blue, #6ea8ff);
+		cursor: pointer;
 	}
 
 	.sidebar button {

@@ -4,7 +4,7 @@ Strategy 2: Bollinger Band Mean Reversion
 Use case: Ranging markets. Fades overextension back to the mean.
 """
 
-from strategies.base import BaseStrategy, SignalResult
+from strategies.base import BaseStrategy, SignalResult, coerce_confidence
 
 
 class BollingerStrategy(BaseStrategy):
@@ -45,7 +45,7 @@ Return ONLY valid JSON with keys: direction, confidence, reasoning, entry_price,
     def parse_response(self, response: dict, indicators: dict) -> SignalResult:
         i15 = indicators.get("15m", {})
         direction = response.get("direction", "none")
-        confidence = float(response.get("confidence", 0.0))
+        confidence = coerce_confidence(response.get("confidence"))
 
         price = i15.get("price")
         low = i15.get("low")
