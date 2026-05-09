@@ -141,6 +141,41 @@
 						<input type="range" min="1" max="20" step="1" value={status.daily_loss_limit * 100}
 							onchange={(e) => updateConfig('daily_loss_limit', (parseFloat(e.currentTarget.value) / 100).toString())} />
 					</div>
+					<div class="control-group">
+						<label>
+							Min Confidence: {(status.min_confidence * 100).toFixed(0)}%
+							<span class="hint">↓ = more trades</span>
+						</label>
+						<input type="range" min="30" max="95" step="1" value={status.min_confidence * 100}
+							onchange={(e) => updateConfig('min_confidence', (parseFloat(e.currentTarget.value) / 100).toString())} />
+					</div>
+					<div class="control-group">
+						<label>ATR Multiplier (stop): {status.atr_multiplier.toFixed(1)}x</label>
+						<input type="range" min="0.5" max="5" step="0.1" value={status.atr_multiplier}
+							onchange={(e) => updateConfig('atr_multiplier', e.currentTarget.value)} />
+					</div>
+					<div class="control-group">
+						<label>Take Profit RR: {status.take_profit_rr.toFixed(1)}</label>
+						<input type="range" min="0.5" max="10" step="0.1" value={status.take_profit_rr}
+							onchange={(e) => updateConfig('take_profit_rr', e.currentTarget.value)} />
+					</div>
+					<div class="control-group">
+						<label>Stop Method</label>
+						<select value={status.stop_loss_method} onchange={(e) => updateConfig('stop_loss_method', e.currentTarget.value)}>
+							<option value="atr">ATR</option>
+							<option value="fixed">Fixed %</option>
+						</select>
+					</div>
+					<div class="control-group">
+						<label>Signal Interval: {status.signal_interval}s</label>
+						<input type="range" min="60" max="3600" step="30" value={status.signal_interval}
+							onchange={(e) => updateConfig('signal_interval', e.currentTarget.value)} />
+					</div>
+					<div class="control-group">
+						<label>Max Watchlist: {status.max_watchlist}</label>
+						<input type="range" min="1" max="20" step="1" value={status.max_watchlist}
+							onchange={(e) => updateConfig('max_watchlist', e.currentTarget.value)} />
+					</div>
 				{/if}
 				<button class="btn btn-primary" onclick={runScreener}>Re-run Screener</button>
 				<button class="btn" onclick={resetCircuit}>Reset Circuit Breaker</button>
@@ -373,6 +408,13 @@
 		font-size: 0.8rem;
 		color: var(--text-secondary);
 		margin-bottom: 0.25rem;
+	}
+
+	.control-group label .hint {
+		font-size: 0.7rem;
+		color: var(--accent-blue, #6ea8ff);
+		margin-left: 0.4rem;
+		opacity: 0.85;
 	}
 
 	.control-group select,

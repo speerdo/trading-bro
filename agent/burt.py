@@ -28,6 +28,22 @@ BURT_MODEL = "moonshotai/kimi-k2.6"
 # Tools whose execution mutates trading state and require user confirmation.
 DESTRUCTIVE_TOOLS = {"close_position"}
 
+# Whitelist of agent_config keys Burt is allowed to tune via set_config, with
+# safety bounds. Anything else (DB credentials, API keys, etc.) is rejected.
+TUNABLE_CONFIG: dict[str, dict] = {
+    "leverage":          {"type": "int",    "min": 1,    "max": 20},
+    "risk_per_trade":    {"type": "float",  "min": 0.001, "max": 0.05},
+    "daily_loss_limit":  {"type": "float",  "min": 0.01, "max": 0.20},
+    "min_confidence":    {"type": "float",  "min": 0.30, "max": 0.95},
+    "atr_multiplier":    {"type": "float",  "min": 0.5,  "max": 5.0},
+    "take_profit_rr":    {"type": "float",  "min": 0.5,  "max": 10.0},
+    "fixed_stop_pct":    {"type": "float",  "min": 0.005, "max": 0.10},
+    "stop_loss_method":  {"type": "enum",   "choices": ["atr", "fixed"]},
+    "strategy":          {"type": "enum",   "choices": ["rsi_macd", "bollinger", "ema_pullback"]},
+    "signal_interval":   {"type": "int",    "min": 60,   "max": 3600},
+    "max_watchlist":     {"type": "int",    "min": 1,    "max": 20},
+}
+
 TOOLS = [
     {
         "type": "function",
@@ -54,6 +70,55 @@ TOOLS = [
                     "symbol": {"type": "string", "description": "Product id or display name."}
                 },
                 "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "set_config",
+            "description": (
+                "Tune a hot-reloadable trading parameter. Writes to agent_config; "
+                "the next loop iteration (within `signal_interval` seconds) picks it up. "
+                "Allowed keys: leverage (1-20), risk_per_trade (0.001-0.05 = 0.1%-5%), "
+                "daily_loss_limit (0.01-0.20), min_confidence (0.30-0.95 — LOWER means "
+                "Burt takes more trades), atr_multiplier (0.5-5.0), take_profit_rr "
+                "(0.5-10.0), fixed_stop_pct (0.005-0.10), stop_loss_method "
+                "('atr'|'fixed'), strategy ('rsi_macd'|'bollinger'|'ema_pullback'), "
+                "signal_interval (60-3600 sec), max_watchlist (1-20). Always tell the "
+                "user what you changed and why."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "key": {"type": "string", "description": "Config key (see allowed list)."},
+                    "value": {"type": "string", "description": "New value as a string."},
+                },
+                "required": ["key", "value"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "query_database",
+            "description": (
+                "Run a read-only SQL SELECT against the TradeBrain Postgres database. "
+                "Use this for ANY historical question — past trades, signals, screener "
+                "picks, lessons, P&L over arbitrary date ranges, etc. The 'Today' stats "
+                "in the live state are just a snapshot; this tool is how you reach "
+                "everything else. SELECT/WITH only, single statement, auto-capped at "
+                "200 rows (or `max_rows`, max 1000), 5s timeout. Schema is documented "
+                "in the system prompt. Postgres dialect — use NOW(), INTERVAL, "
+                "CURRENT_DATE, etc."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "sql": {"type": "string", "description": "A single SELECT or WITH...SELECT statement."},
+                    "max_rows": {"type": "integer", "description": "Row cap (default 200, max 1000)."},
+                },
+                "required": ["sql"],
             },
         },
     },
@@ -428,14 +493,53 @@ class Burt:
             "Open positions:\n"
             f"{pos_lines}\n\n"
             "TOOL USE:\n"
-            "- You have function tools: read-only (get_*) and control (pause/resume/"
-            "reset_circuit_breaker/force_screener_run/close_position).\n"
+            "- You have function tools: read-only (get_*, query_database), config "
+            "(set_config), and control (pause/resume/reset_circuit_breaker/"
+            "force_screener_run/close_position).\n"
+            "- set_config tunes risk/strategy knobs live. The single biggest lever for "
+            "trade frequency is min_confidence — drop it (e.g. 0.50) to take more "
+            "trades, raise it to be picky. Always tell the user what you changed.\n"
             "- Use them when the user asks something the live state above can't answer "
             "(e.g. 'show me BTC's RSI right now' → get_indicator_snapshot).\n"
             "- close_position is destructive. NEVER call it without first describing the "
             "action and asking the user to reply with the literal word 'confirm'. The "
             "system will refuse the call otherwise.\n"
             "- Don't call tools just to summarize what the user can see in the live state.\n\n"
+            "DATABASE ACCESS (query_database):\n"
+            "The 'Today' line above is just a snapshot. For ANY question about the past "
+            "— last week's P&L, win rate this month, trades in a specific symbol, "
+            "screener history, your own past lessons — use query_database with a "
+            "Postgres SELECT. The full schema is yours; only writes are blocked.\n"
+            "Tables (Postgres, all timestamps are TIMESTAMPTZ):\n"
+            "  trades(id, created_at, closed_at, symbol, direction, strategy, "
+            "confidence, entry_price, stop_loss, take_profit, size_usdc, margin_usdc, "
+            "leverage, risk_usdc, is_paper, status, exit_price, pnl_usdc, reasoning, "
+            "order_id, signal_id, product_id, display_name, tax_treatment, product_type)\n"
+            "    -- status is 'open' or a closed variant; pnl_usdc only set when closed\n"
+            "  signals(id, created_at, symbol, direction, strategy, confidence, "
+            "reasoning, acted_on, skip_reason, rsi_15m, macd_hist_15m, atr_15m, price)\n"
+            "    -- one row per screened symbol per loop iteration; acted_on=true means "
+            "it became a trade\n"
+            "  screener_runs(id, created_at, selected_coins TEXT[], scores JSONB)\n"
+            "  memories(id, created_at, updated_at, memory_type, content, source, "
+            "symbol, strategy, importance, times_retrieved, last_retrieved)\n"
+            "    -- your own long-term memory store; embedding column exists but skip it\n"
+            "  discord_messages(id, created_at, role, content, discord_user, message_id)\n"
+            "  daily_consolidations(id, created_at, date, summary, lessons TEXT[], "
+            "stats JSONB)\n"
+            "  agent_config(key, value, updated_at)\n"
+            "Use NOW(), CURRENT_DATE, INTERVAL '7 days', date_trunc('day', ...), "
+            "FILTER (WHERE ...), etc. Always include a WHERE on created_at when scanning "
+            "trades/signals so you don't pull the whole table. Examples:\n"
+            "  -- last 7 days P&L\n"
+            "  SELECT COUNT(*) FILTER (WHERE pnl_usdc > 0) AS wins, "
+            "COUNT(*) FILTER (WHERE pnl_usdc < 0) AS losses, "
+            "ROUND(SUM(pnl_usdc)::numeric, 2) AS pnl FROM trades "
+            "WHERE closed_at >= NOW() - INTERVAL '7 days' AND status != 'open';\n"
+            "  -- best/worst trades this month\n"
+            "  SELECT symbol, direction, pnl_usdc, closed_at FROM trades "
+            "WHERE closed_at >= date_trunc('month', NOW()) AND status != 'open' "
+            "ORDER BY pnl_usdc DESC LIMIT 10;\n\n"
             "REPLY STYLE:\n"
             "- Never invent numbers. If a tool result doesn't have what you need, say so plainly.\n"
             "- Keep replies under ~3 sentences unless the user explicitly asks for detail."
@@ -480,6 +584,48 @@ class Burt:
                     return json.dumps({"error": "UNKNOWN_SYMBOL", "input": symbol})
                 snap = await self._indicator_snapshot(product_id)
                 return json.dumps(snap)
+
+            if name == "set_config":
+                key = (args.get("key") or "").strip()
+                raw_value = args.get("value")
+                if key not in TUNABLE_CONFIG:
+                    return json.dumps({
+                        "error": "FORBIDDEN_KEY",
+                        "key": key,
+                        "allowed": list(TUNABLE_CONFIG.keys()),
+                    })
+                spec = TUNABLE_CONFIG[key]
+                try:
+                    if spec["type"] == "int":
+                        coerced = int(float(raw_value))
+                        if not (spec["min"] <= coerced <= spec["max"]):
+                            raise ValueError(f"out of range [{spec['min']}, {spec['max']}]")
+                    elif spec["type"] == "float":
+                        coerced = float(raw_value)
+                        if not (spec["min"] <= coerced <= spec["max"]):
+                            raise ValueError(f"out of range [{spec['min']}, {spec['max']}]")
+                    elif spec["type"] == "enum":
+                        coerced = str(raw_value)
+                        if coerced not in spec["choices"]:
+                            raise ValueError(f"must be one of {spec['choices']}")
+                    else:
+                        raise ValueError("unknown spec type")
+                except (ValueError, TypeError) as exc:
+                    return json.dumps({"error": "INVALID_VALUE", "key": key, "detail": str(exc)})
+                str_val = str(coerced)
+                await self.db.set_config(key, str_val)
+                config.set_config_key(key, str_val)
+                return json.dumps({"ok": True, "key": key, "value": str_val,
+                                   "note": "Effective on next loop iteration."})
+
+            if name == "query_database":
+                sql = args.get("sql", "")
+                max_rows = args.get("max_rows", 200) or 200
+                try:
+                    rows = await self.db.read_only_query(sql, max_rows=max_rows)
+                except ValueError as exc:
+                    return json.dumps({"error": "INVALID_SQL", "detail": str(exc)})
+                return json.dumps({"row_count": len(rows), "rows": rows}, default=str)
 
             if name == "get_recent_signals":
                 limit = min(int(args.get("limit", 10) or 10), 50)

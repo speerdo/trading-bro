@@ -102,14 +102,17 @@ class TradeBrainAgent:
             await self.shutdown()
 
     async def _loop(self) -> None:
-        interval = self.cfg.default_signal_interval
         screener_counter = 0
-        screener_interval = max(1, 4 * 3600 // interval)
 
         while not self._shutdown.is_set():
             try:
                 await self.db.sync_config()
                 await self.risk.sync()
+
+                # Read hot-reload values fresh each iteration so UI/Burt edits
+                # take effect on the next tick instead of requiring a restart.
+                interval = self.cfg.signal_interval
+                screener_interval = max(1, 4 * 3600 // interval)
 
                 screener_counter += 1
                 if screener_counter >= screener_interval:
@@ -147,7 +150,7 @@ class TradeBrainAgent:
                 self._candles_to_df(candles_1h),
             )
 
-            strategy = STRATEGIES.get(self.cfg.default_strategy)
+            strategy = STRATEGIES.get(self.cfg.strategy)
             if not strategy:
                 return
 

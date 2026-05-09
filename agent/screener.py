@@ -49,7 +49,7 @@ class Screener:
         self.cfg = config.get_config()
 
     async def run(self, max_watchlist: int | None = None) -> list[str]:
-        max_watchlist = max_watchlist or self.cfg.default_max_watchlist
+        max_watchlist = max_watchlist or self.cfg.max_watchlist
         logger.info("Starting FCM screener...")
 
         # 1. Discover perp products

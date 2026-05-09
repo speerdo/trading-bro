@@ -76,9 +76,16 @@ Three built-in strategies provide signal prompts to the AI:
 - **Take profit**: Configurable R:R (default 2.0)
 - **Circuit breaker**: Halts ALL trading after daily loss limit (default 5%)
 - **Leverage cap**: Default 3x, max 10x (FCM limit)
-- **Min confidence**: 0.65 to act on a signal
+- **Min confidence**: default 0.65 to act on a signal — *tunable live from the UI or Burt*
 
 ## Quick Start
+
+TradeBrain runs as **two processes**:
+
+| Process | Command | What it runs |
+|---|---|---|
+| Agent | `python -m agent.main` | Trading loop + FastAPI on :8000 + position monitor + **Burt** (Discord) |
+| Dashboard | `cd ui && npm run dev` | SvelteKit UI on :5173 |
 
 ```bash
 # 1. Clone & setup
@@ -89,12 +96,12 @@ pip install -r requirements.txt
 
 # 2. Configure environment
 cp .env.example .env
-# Edit .env with your API keys (see below)
+# Edit .env with your API keys (see "Required Environment Variables" below)
 
-# 3. Initialize database
+# 3. Initialize database (one-time)
 python scripts/setup_db.py
 
-# 4. Test the screener
+# 4. (Optional) sanity-check the screener
 python -c "
 import asyncio
 from agent.coinbase_client import CoinbaseClient
@@ -107,13 +114,78 @@ async def test():
 asyncio.run(test())
 "
 
-# 5. Start the agent
+# 5. Terminal A — start the agent (this also starts Burt + the API)
 python -m agent.main
 
-# 6. Start the dashboard (separate terminal)
+# 6. Terminal B — start the dashboard
 cd ui && npm install && npm run dev
 # → open http://localhost:5173
 ```
+
+## Running Burt (Discord)
+
+Burt is **not** a separate process — he runs as a background asyncio task inside `python -m agent.main`. He only attaches if `DISCORD_BOT_TOKEN`, `DISCORD_CHANNEL_ID`, and `DISCORD_USER_ID` are all set in `.env`. Otherwise the agent runs headless and Burt is silently skipped.
+
+### One-time Discord setup
+
+1. Create an application + bot at <https://discord.com/developers/applications>.
+2. Bot tab → enable **Message Content Intent** (Burt won't see your messages without it).
+3. OAuth2 → URL Generator → scopes: `bot`; permissions: `Send Messages`, `Read Message History`. Open the generated URL to invite Burt to your server.
+4. In Discord (with Developer Mode on), right-click your channel → **Copy Channel ID** → set as `DISCORD_CHANNEL_ID`. Right-click your username → **Copy User ID** → set as `DISCORD_USER_ID`.
+5. Bot tab → **Reset Token** → set as `DISCORD_BOT_TOKEN`.
+
+Burt **only** responds in the configured channel, **only** to the configured user. Other messages are ignored.
+
+### Verify he's online
+
+Look for this line in the agent logs after startup:
+
+```
+Burt connected as Burt#1234
+```
+
+### What you can say to Burt
+
+| Intent | Example |
+|---|---|
+| Ask about state | "what positions are open?" / "how did I do this week?" |
+| Spot-check indicators | "what does BTC's RSI look like right now?" |
+| Audit signals | "show me the last 20 signals for ETH" |
+| Tune knobs | "lower min confidence to 0.5" / "drop me to 2x leverage" / "switch strategy to bollinger" |
+| Pause / resume | "pause" / "stop trading" / "resume" |
+| Close a position | "close BTC PERP" → Burt asks for confirmation → reply `confirm` |
+
+Burt has read-only SQL access to the entire database (`query_database` tool), so he can answer arbitrary historical questions about trades, signals, screener picks, and his own memories.
+
+## Running the UI
+
+```bash
+cd ui
+npm install      # first time only
+npm run dev
+# → http://localhost:5173
+```
+
+The UI talks to FastAPI on `http://127.0.0.1:8000`, so the agent must be running first. CORS is preconfigured for `localhost:5173`.
+
+### Live tunable knobs
+
+Every slider in the sidebar writes to the `agent_config` table and is picked up on the **next loop iteration** (within `signal_interval` seconds — no restart needed):
+
+| Knob | Range | Effect |
+|---|---|---|
+| Strategy | rsi_macd / bollinger / ema_pullback | Which prompt template Burt uses |
+| Leverage | 1–20× | Position notional / margin |
+| Risk/Trade | 0.5–5% of balance | $-at-risk per trade |
+| Daily Loss Limit | 1–20% | Trips the circuit breaker |
+| **Min Confidence** | **30–95%** | **The trade-frequency lever — lower = more trades** |
+| ATR Multiplier | 0.5–5× | Stop distance when method = ATR |
+| Take Profit RR | 0.5–10 | TP distance vs stop distance |
+| Stop Method | atr / fixed | Use ATR or fixed-% stops |
+| Signal Interval | 60–3600s | How often the agent re-evaluates the watchlist |
+| Max Watchlist | 1–20 | How many symbols the screener keeps |
+
+If you're getting no trades in a flat market, drop **Min Confidence** to ~0.5 — that's the gate most setups fail.
 
 ## Required Environment Variables
 

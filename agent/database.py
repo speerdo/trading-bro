@@ -6,11 +6,23 @@ pgvector is used for semantic memory (memories.embedding).
 """
 
 import json
+import re
 from typing import Any
 import asyncpg
 from loguru import logger
 
 import config
+
+# Defense-in-depth keyword blocklist for the read-only query tool. Even though
+# we run inside a READ ONLY transaction, this rejects writes early with a clear
+# error and blocks side-effecting commands the read-only flag doesn't cover.
+_DANGEROUS_SQL = re.compile(
+    r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|CREATE|GRANT|REVOKE|TRUNCATE|"
+    r"COPY|VACUUM|REINDEX|CLUSTER|LOCK|SET|BEGIN|COMMIT|ROLLBACK|END|"
+    r"SAVEPOINT|RELEASE|EXECUTE|CALL|DO|LISTEN|NOTIFY|UNLISTEN|PREPARE|"
+    r"DEALLOCATE|REFRESH|RESET|DISCARD|LOAD|SECURITY)\b",
+    re.IGNORECASE,
+)
 
 
 class Database:
@@ -73,6 +85,38 @@ class Database:
             await self.connect()
         async with self.pool.acquire() as conn:
             return await conn.fetchval(sql, *args)
+
+    async def read_only_query(self, sql: str, max_rows: int = 200) -> list[dict]:
+        """
+        Run a SELECT-only SQL statement with safety guards.
+
+        Used by Burt's `query_database` tool to give the LLM arbitrary
+        historical access without risking writes.
+        """
+        stripped = (sql or "").strip().rstrip(";").strip()
+        if not stripped:
+            raise ValueError("Empty SQL")
+        if len(stripped) > 4000:
+            raise ValueError("Query too long (>4000 chars)")
+        if ";" in stripped:
+            raise ValueError("Multiple statements not allowed")
+        first_word = stripped.split(None, 1)[0].upper()
+        if first_word not in ("SELECT", "WITH"):
+            raise ValueError(f"Only SELECT/WITH queries allowed; got '{first_word}'")
+        if _DANGEROUS_SQL.search(stripped):
+            raise ValueError("Query contains a forbidden keyword")
+
+        cap = max(1, min(int(max_rows or 200), 1000))
+        if not re.search(r"\bLIMIT\s+\d+\b", stripped, re.IGNORECASE):
+            stripped = f"{stripped} LIMIT {cap}"
+
+        if not self.pool:
+            await self.connect()
+        async with self.pool.acquire() as conn:
+            async with conn.transaction(readonly=True):
+                await conn.execute("SET LOCAL statement_timeout = '5s'")
+                rows = await conn.fetch(stripped)
+        return [dict(r) for r in rows[:cap]]
 
     # ------------------------------------------------------------------
     # Signals

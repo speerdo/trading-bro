@@ -98,17 +98,25 @@ class RiskManager:
     async def sync(self) -> None:
         """Called at top of each signal loop iteration."""
         from agent.database import get_db
+        # DB key → RiskParams field. Several params have a `_pct` suffix on the
+        # state object that the DB key omits — map them explicitly so the UI
+        # actually moves the right knob.
+        key_to_field = {
+            "leverage": "leverage",
+            "risk_per_trade": "risk_per_trade_pct",
+            "daily_loss_limit": "daily_loss_limit_pct",
+            "atr_multiplier": "atr_multiplier",
+            "take_profit_rr": "take_profit_rr",
+            "fixed_stop_pct": "fixed_stop_pct",
+            "stop_loss_method": "stop_loss_method",
+            "min_confidence": "min_confidence",
+        }
         try:
             db = await get_db()
-            keys = [
-                "leverage", "risk_per_trade", "daily_loss_limit",
-                "atr_multiplier", "take_profit_rr", "stop_loss_method",
-                "min_confidence",
-            ]
-            for key in keys:
+            for key, field_name in key_to_field.items():
                 val = await db.get_config_value(key)
                 if val is not None:
-                    setattr(self.state, key, self._coerce(key, val))
+                    setattr(self.state, field_name, self._coerce(key, val))
         except Exception as exc:
             logger.warning(f"RiskManager sync failed: {exc}")
 
@@ -125,7 +133,7 @@ class RiskManager:
         if key in ("leverage",):
             return int(val)
         if key in ("risk_per_trade", "daily_loss_limit", "atr_multiplier",
-                   "take_profit_rr", "min_confidence"):
+                   "take_profit_rr", "min_confidence", "fixed_stop_pct"):
             return float(val)
         return val
 
