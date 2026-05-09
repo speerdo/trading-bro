@@ -150,7 +150,8 @@ async def get_positions() -> list[dict]:
     positions = _executor.get_open_positions()
     return [
         {
-            "symbol": p.symbol,
+            "symbol": p.symbol,                          # product_id (used to close)
+            "display_name": p.display_name or p.symbol,  # user-friendly name for the UI
             "direction": p.direction,
             "entry_price": p.entry_price,
             "stop_loss": p.stop_loss,

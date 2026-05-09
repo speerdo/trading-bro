@@ -110,6 +110,19 @@ def compute_indicators(df_15m: pd.DataFrame, df_1h: pd.DataFrame) -> dict:
     vol_sma = df_15m["volume"].rolling(window=20, min_periods=20).mean()
     df_15m["vol_ratio"] = df_15m["volume"] / vol_sma
 
+    # Donchian channels (20-bar) for the breakout strategy.
+    # `_prev` versions exclude the current bar — that's what you compare against
+    # to detect a *new* breakout (close > prior 20-bar high).
+    df_15m["dc_upper"] = df_15m["high"].rolling(window=20, min_periods=20).max()
+    df_15m["dc_lower"] = df_15m["low"].rolling(window=20, min_periods=20).min()
+    df_15m["dc_middle"] = (df_15m["dc_upper"] + df_15m["dc_lower"]) / 2.0
+    df_15m["dc_upper_prev"] = df_15m["dc_upper"].shift(1)
+    df_15m["dc_lower_prev"] = df_15m["dc_lower"].shift(1)
+
+    # Rolling-mean BB width — lets the breakout strategy detect volatility
+    # *expansion* (current width > recent average) vs. contraction.
+    df_15m["bb_width_avg20"] = df_15m["bb_width"].rolling(window=20, min_periods=20).mean()
+
     # --- 1h indicators ---
     df_1h = df_1h.copy()
     df_1h["ema20"] = ema(df_1h["close"], length=20)
@@ -140,8 +153,14 @@ def compute_indicators(df_15m: pd.DataFrame, df_1h: pd.DataFrame) -> dict:
             "bb_middle": _safe(last["bb_middle"]),
             "bb_lower": _safe(last["bb_lower"]),
             "bb_width": _safe(last["bb_width"]),
+            "bb_width_avg20": _safe(last["bb_width_avg20"]),
             "atr": _safe(last["atr"]),
             "vol_ratio": _safe(last["vol_ratio"]),
+            "dc_upper": _safe(last["dc_upper"]),
+            "dc_lower": _safe(last["dc_lower"]),
+            "dc_middle": _safe(last["dc_middle"]),
+            "dc_upper_prev": _safe(last["dc_upper_prev"]),
+            "dc_lower_prev": _safe(last["dc_lower_prev"]),
         },
         "1h": {
             "price": _safe(last_1h["close"]),

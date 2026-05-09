@@ -164,9 +164,10 @@
 							{@render indicator('strategy')}
 						</div>
 						<select value={val('strategy')} onchange={(e) => commit('strategy', e.currentTarget.value)}>
-							<option value="rsi_macd">RSI + MACD</option>
-							<option value="bollinger">Bollinger</option>
-							<option value="ema_pullback">EMA Pullback</option>
+							<option value="rsi_macd">RSI + MACD (momentum)</option>
+							<option value="bollinger">Bollinger (mean reversion)</option>
+							<option value="ema_pullback">EMA Pullback (trend continuation)</option>
+							<option value="donchian_breakout">Donchian Breakout (volatility expansion)</option>
 						</select>
 					</div>
 
@@ -330,7 +331,7 @@
 							<tbody>
 								{#each positions as pos}
 									<tr>
-										<td>{pos.symbol}</td>
+										<td title={pos.symbol}>{pos.display_name || pos.symbol}</td>
 										<td class={pos.direction === 'long' ? 'green' : 'red'}>{pos.direction.toUpperCase()}</td>
 										<td>{pos.entry_price.toFixed(2)}</td>
 										<td>{pos.stop_loss.toFixed(2)}</td>

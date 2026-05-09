@@ -39,7 +39,7 @@ TUNABLE_CONFIG: dict[str, dict] = {
     "take_profit_rr":    {"type": "float",  "min": 0.5,  "max": 10.0},
     "fixed_stop_pct":    {"type": "float",  "min": 0.005, "max": 0.10},
     "stop_loss_method":  {"type": "enum",   "choices": ["atr", "fixed"]},
-    "strategy":          {"type": "enum",   "choices": ["rsi_macd", "bollinger", "ema_pullback"]},
+    "strategy":          {"type": "enum",   "choices": ["rsi_macd", "bollinger", "ema_pullback", "donchian_breakout"]},
     "signal_interval":   {"type": "int",    "min": 60,   "max": 3600},
     "max_watchlist":     {"type": "int",    "min": 1,    "max": 20},
 }
@@ -499,6 +499,10 @@ class Burt:
             "- set_config tunes risk/strategy knobs live. The single biggest lever for "
             "trade frequency is min_confidence — drop it (e.g. 0.50) to take more "
             "trades, raise it to be picky. Always tell the user what you changed.\n"
+            "- Strategy selector — match to regime: rsi_macd (trending momentum reversals), "
+            "bollinger (range-bound mean reversion — DANGEROUS in strong trends), "
+            "ema_pullback (continuation in established trends), donchian_breakout "
+            "(volatility-expansion / range breakouts — the cleanest fit for leverage).\n"
             "- Use them when the user asks something the live state above can't answer "
             "(e.g. 'show me BTC's RSI right now' → get_indicator_snapshot).\n"
             "- close_position is destructive. NEVER call it without first describing the "

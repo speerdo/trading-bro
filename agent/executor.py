@@ -39,6 +39,11 @@ class PaperPosition:
     tax_treatment: str = "1256"
     product_type: str = "perp"
 
+    @property
+    def symbol(self) -> str:
+        """Backward-compat alias — `product_id` is the canonical exchange identifier."""
+        return self.product_id
+
 
 @dataclass
 class OrderResult:
